@@ -1,0 +1,22 @@
+plugins {
+    id 'com.moowork.node' version '0.11'
+}
+
+def buildLabel = "${System.env.USER}.${new Date().format("yyyyMMddHHmmss")}"
+def travisBuildLabel = System.env.TRAVIS_BUILD_NUMBER
+if (travisBuildLabel) {
+    buildLabel = travisBuildLabel
+}
+version = buildLabel
+
+task bundle(type: NpmTask,
+            description: 'Bundles client side artefacts using webpack.') {
+    args = ['run', 'bundle']
+}
+bundle.dependsOn npmInstall
+
+task start(type: NpmTask,
+           description: 'Run client side application.') {
+    args = ['start']
+}
+start.dependsOn npmInstall

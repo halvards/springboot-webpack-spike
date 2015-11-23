@@ -1,0 +1,154 @@
+buildscript {
+    repositories {
+        mavenCentral()
+        jcenter()
+        maven { url 'https://repo.spring.io/snapshot' }
+        maven { url 'https://repo.spring.io/milestone' }
+    }
+    dependencies {
+        classpath 'org.springframework.boot:spring-boot-gradle-plugin:1.3.0.RELEASE'
+        classpath 'org.unbroken-dome.gradle-plugins:gradle-testsets-plugin:1.2.0'
+    }
+}
+
+apply plugin: 'application'                  // http://www.gradle.org/docs/current/userguide/application_plugin.html
+apply plugin: 'java'                         // http://www.gradle.org/docs/current/userguide/java_plugin.html
+apply plugin: 'org.unbroken-dome.test-sets'  // https://github.com/unbroken-dome/gradle-testsets-plugin
+apply plugin: 'spring-boot'                  // http://docs.spring.io/spring-boot/docs/current/reference/html/build-tool-plugins-gradle-plugin.html
+
+def javaVersion = '1.8'
+sourceCompatibility = javaVersion
+targetCompatibility = javaVersion
+
+def springLoadedVersion = '1.2.4.RELEASE'
+mainClassName = 'com.skogsrud.halvard.springmvc.spike.Application'
+applicationDefaultJvmArgs = ["-javaagent:agents/springloaded-${springLoadedVersion}.jar", '-noverify']
+
+def buildLabel = "${System.env.USER}.${new Date().format('yyyyMMddHHmmss')}"
+def travisBuildLabel = System.env.TRAVIS_BUILD_NUMBER
+if (travisBuildLabel) {
+    buildLabel = travisBuildLabel
+}
+
+group = 'com.skogsrud.halvard'
+version = buildLabel
+
+jar {
+    manifest {
+        attributes 'Main-Class': mainClassName
+    }
+
+    from('client/dist') {
+      into 'static'
+    }
+}
+
+processResources.dependsOn ':client:bundle'
+
+configurations {
+    all*.exclude group: 'commons-logging'              // Never include commons-logging (use SLF4J instead)
+    all*.exclude group: 'log4j'                        // Never include log4j (use SLF4J instead)
+    all*.exclude module: 'jetty-jsp'                   // No need for JSP support
+    all*.exclude module: 'slf4j-simple'                // Use logback
+    all*.exclude module: 'spring-boot-starter-tomcat'  // Never include Tomcat (use Jetty instead)
+
+    springloaded
+    newrelic
+}
+
+testSets {
+    integrationTest { dirName = 'integration-test' }
+}
+
+tasks.integrationTest.group = 'Verification'
+tasks.integrationTest.description = 'Runs the integration tests.'
+//tasks.integrationTest.outputs.upToDateWhen { false }  // Run all integration tests every time, even if no changes have been made
+
+check.dependsOn integrationTest      // The check task fails the build if there are failing integration tests
+integrationTest.shouldRunAfter test  // Run unit tests before integration tests
+
+// Ensure that the HTML reports of unit and integration tests are written to different directories
+tasks.withType(Test) {
+    reports.html.destination = file("${reporting.baseDir}/${name}")
+}
+
+repositories {
+    mavenCentral()
+    maven { url 'https://repo.spring.io/snapshot' }
+    maven { url 'https://repo.spring.io/milestone' }
+}
+
+def commonsCodecVersion = '1.9'
+def commonsCollections4Version = '4.0'
+def commonsIoVersion = '2.4'
+def commonsLang3Version = '3.4'
+def hamcrestVersion = '1.3'
+def jettyVersion = '9.3.6.v20151106'
+def jmustacheVersion = '1.11'
+def junitVersion = '4.12'
+def mockitoVersion = '2.0.31-beta'
+def mockwebserverVersion = '2.5.0'
+def newRelicAgentVersion = '3.19.2'
+def okhttpVersion = '2.5.0'
+def springBootVersion = '1.3.0.RELEASE'
+
+dependencies {
+    compile "org.springframework.boot:spring-boot-starter-web:${springBootVersion}",
+            "org.springframework.boot:spring-boot-devtools:${springBootVersion}",
+            "org.eclipse.jetty:jetty-webapp:${jettyVersion}",
+            "com.samskivert:jmustache:${jmustacheVersion}",
+            "org.apache.commons:commons-lang3:${commonsLang3Version}",
+            "commons-io:commons-io:${commonsIoVersion}",
+            "commons-codec:commons-codec:${commonsCodecVersion}",
+            "org.apache.commons:commons-collections4:${commonsCollections4Version}",
+            "com.squareup.okhttp:okhttp:${okhttpVersion}"
+
+    testCompile "junit:junit:${junitVersion}",
+            "org.hamcrest:hamcrest-library:${hamcrestVersion}",
+            "org.mockito:mockito-core:${mockitoVersion}",
+            "org.springframework.boot:spring-boot-starter-test:${springBootVersion}"
+
+    integrationTestCompile "com.squareup.okhttp:mockwebserver:${mockwebserverVersion}"
+
+    springloaded "org.springframework:springloaded:${springLoadedVersion}"
+
+    newrelic "com.newrelic.agent.java:newrelic-agent:${newRelicAgentVersion}"
+}
+
+task onejar(type: Jar,
+        description: 'Create all-in-one executable JAR file.',
+        group: 'Distribution') {
+    manifest {
+        attributes 'Main-Class': mainClassName
+    }
+    baseName = project.name + '-all'
+    from { configurations.compile.collect { it.isDirectory() ? it : zipTree(it) } }
+    with jar
+}
+
+task copySpringLoaded(type: Copy,
+        description: 'Make Spring Loaded available for IDE and CLI use.',
+        group: 'Build Setup') {
+    from {
+        configurations.springloaded
+    }
+    into "agents/"
+}
+run.dependsOn copySpringLoaded
+
+task copyNewRelic(type: Copy,
+        description: 'Make NewRelic available for Heroku.',
+        group: 'Build Setup') {
+    from {
+        configurations.newrelic
+    }
+    into "agents/"
+    rename "newrelic-agent-${newRelicAgentVersion}.jar", 'newrelic-agent.jar'
+}
+copyNewRelic.shouldRunAfter clean
+
+assemble.shouldRunAfter clean
+assemble.shouldRunAfter copyNewRelic
+task stage(dependsOn: ['clean', 'copyNewRelic', 'assemble'],
+        description: 'Heroku uses this task to build the app.',
+        group: 'Build')
